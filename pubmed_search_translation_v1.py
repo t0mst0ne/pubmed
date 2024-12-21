@@ -28,7 +28,7 @@ SCOPE = [
 ]
 CREDS_FILE = "sublime-state-xxx.json"  # **CHANGE THIS** Path to your Google service account credentials JSON file
 SHEET_NAME = "Pubmed_search_Dementia"  # **CHANGE THIS** Name of your Google Sheet
-WORKSHEET_NAME = "dementia_treatment"  # **CHANGE THIS** Name of the worksheet within the Google Sheet
+WORKSHEET_NAME = search_topic          # **CHANGE THIS** Name of the worksheet within the Google Sheet
 
 # Set your email for Entrez (use environment variable)
 Entrez.email = os.environ.get("ENTREZ_EMAIL")  # **MAKE SURE TO SET THIS ENVIRONMENT VARIABLE**
