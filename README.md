@@ -20,7 +20,7 @@
 以下步驟將指導用戶如何與您的服務帳戶分享 Google 試算表，以便Script 可以直接訪問和修改它。
 
 ## Google Cloud 設定步驟教學：
-### 建立 Google Cloud 專案：
+### 建立 Google Cloud 專案 以取得 "服務帳戶金鑰" 和 "服務帳戶電子郵件"：
 
 * 前往 Google Cloud Console：打開網頁瀏覽器並前往 https://console.cloud.google.com/ 。
 * 登入：如果您尚未登入，請使用您的 Google 帳戶登入。
