@@ -1,0 +1,436 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "f4174030-aa82-4a5b-9684-8ca5f43ce4b8",
+      "name": "Weekly Schedule Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        -1380,
+        180
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "fromEmail": "your@gmail.com",
+        "toEmail": "your@gmail.com",
+        "subject": "=n8n PubMed Dementia Treatment RCT Results - {{ $now.format('yyyy-MM-dd') }}",
+        "emailFormat": "html",
+        "html": "={{ $json.output.text }}",
+        "options": {}
+      },
+      "id": "a27c7aec-cf66-40c4-a378-420e4145eb0c",
+      "name": "Send Email Notification",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ],
+      "webhookId": "3114b97f-5dd6-4473-9256-c195f4b24ad5",
+      "credentials": {
+        "smtp": {
+          "id": "tlWjFgkDJWy5ZZ9d",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "PubMed Research Results"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "PMID": "={{ $json.pmid }}",
+            "Title": "={{ $json.title }}",
+            "Authors": "={{ $json.authors }}",
+            "Journal": "={{ $json.journal }}",
+            "Publication_Date": "={{ $json.publication_date }}",
+            "Abstract": "={{ $json.abstract }}",
+            "DOI": "={{ $json.doi }}",
+            "Keywords": "={{ $json.keywords }}",
+            "PubMed_URL": "={{ $json.pubmed_url }}",
+            "Retrieved_Date": "={{ $now.format('yyyy-MM-dd HH:mm:ss') }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "24076e73-462e-41fd-9278-bef38bfc6c4b",
+      "name": "Save to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        680,
+        -260
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "KzstNBd1CaDluk81",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 此程式碼假設 'items' 是來自前一個 n8n 節點的輸入陣列。\n// 它預期 items[0].json 包含帶有 \"PubmedArticleSet\" 的物件。\n\nconst data = items[0].json;\n\n// 檢查基本結構是否符合預期\nif (!data || !data.PubmedArticleSet || !data.PubmedArticleSet.PubmedArticle) {\n  return [{ json: { error: \"無效輸入：找不到 PubmedArticleSet 或 PubmedArticle。\" } }];\n}\n\nconst pubmedArticles = data.PubmedArticleSet.PubmedArticle;\n\n// 檢查 pubmedArticles 是否為陣列\nif (!Array.isArray(pubmedArticles)) {\n  return [{ json: { error: \"無效輸入：PubmedArticle 不是一個陣列。\" } }];\n}\n\nconst results = [];\n\nfor (const pubArticle of pubmedArticles) {\n  const medlineCitation = pubArticle?.MedlineCitation;\n  const articleDetails = medlineCitation?.Article;\n  const pubmedData = pubArticle?.PubmedData;\n\n  // 如果文章的核心數據缺失，則跳過\n  if (!medlineCitation || !articleDetails) {\n    results.push({\n      json: {\n        error: \"由於 MedlineCitation 或 Article 數據缺失，已跳過此文章。\",\n        pmid: medlineCitation?.PMID?._ || \"未知的 PMID\"\n      }\n    });\n    continue;\n  }\n\n  const articleName = articleDetails?.ArticleTitle || null;\n  const journalName = articleDetails?.Journal?.Title || null;\n  \n  let publishYear = null;\n  // 首先嘗試從 JournalIssue 獲取年份\n  if (articleDetails?.Journal?.JournalIssue?.PubDate?.Year) {\n    publishYear = articleDetails.Journal.JournalIssue.PubDate.Year;\n  } \n  // 如果在 JournalIssue 中找不到，則嘗試從 ArticleDate 獲取\n  else if (articleDetails?.ArticleDate?.Year) { \n    publishYear = articleDetails.ArticleDate.Year;\n  }\n\n  let articleType = null;\n  const publicationTypes = articleDetails?.PublicationTypeList?.PublicationType;\n  if (publicationTypes) {\n    if (Array.isArray(publicationTypes)) {\n      articleType = publicationTypes.map(pt => pt._).join(', ');\n    } else if (publicationTypes._) { // 處理它可能是單一物件的情況\n      articleType = publicationTypes._;\n    }\n  }\n\n  const pmid = medlineCitation?.PMID?._ || null;\n  const pmidUrl = pmid ? `https://pubmed.ncbi.nlm.nih.gov/${pmid}/` : null;\n\n  let fullTextUrl = null;\n  let doi = null;\n\n  // 嘗試從 ELocationID 獲取 DOI\n  if (articleDetails?.ELocationID && Array.isArray(articleDetails.ELocationID)) {\n    const doiObject = articleDetails.ELocationID.find(id => id.EIdType === 'doi' && id.ValidYN === 'Y');\n    if (doiObject?._) {\n      doi = doiObject._;\n      fullTextUrl = `https://doi.org/${doi}`;\n    }\n  }\n\n  // 如果在 ELocationID 中找不到 DOI，則嘗試從 PubmedData.ArticleIdList 中尋找\n  if (!doi && pubmedData?.ArticleIdList?.ArticleId && Array.isArray(pubmedData.ArticleIdList.ArticleId)) {\n    const doiArticleIdObject = pubmedData.ArticleIdList.ArticleId.find(id => id.IdType === 'doi');\n    if (doiArticleIdObject?._) {\n        doi = doiArticleIdObject._;\n        if (!fullTextUrl) { // 僅在 ELocationID 未找到時設定\n           fullTextUrl = `https://doi.org/${doi}`;\n        }\n    }\n  }\n  \n  // 如果沒有找到 DOI 網址，則嘗試從 PubmedData.ArticleIdList 獲取 PMC 網址\n  if (!fullTextUrl && pubmedData?.ArticleIdList?.ArticleId && Array.isArray(pubmedData.ArticleIdList.ArticleId)) {\n    const pmcIdObject = pubmedData.ArticleIdList.ArticleId.find(id => id.IdType === 'pmc');\n    if (pmcIdObject?._) {\n      let pmcId = pmcIdObject._;\n      // 確保 PMCID 以 \"PMC\" 開頭\n      if (pmcId && !pmcId.startsWith('PMC')) {\n        pmcId = `PMC${pmcId}`;\n      }\n      fullTextUrl = `https://www.ncbi.nlm.nih.gov/pmc/articles/${pmcId}/`;\n    }\n  }\n\n  // 提取摘要\n  let abstractText = null;\n  const abstractContent = articleDetails?.Abstract?.AbstractText; // 這通常是一個物件陣列\n  if (abstractContent) {\n    if (Array.isArray(abstractContent)) {\n      abstractText = abstractContent.map(part => {\n        let sectionText = \"\";\n        if (part.Label) {\n          sectionText += `${part.Label}: `; // 添加標籤\n        }\n        if (part._) {\n          sectionText += part._; // 添加文本內容\n        }\n        return sectionText;\n      }).filter(text => text && text.trim() !== \"\").join('\\n\\n'); // 用雙換行符連接各個部分\n    } else if (typeof abstractContent === 'object' && abstractContent._) { // 如果 AbstractText 是單一物件\n      let sectionText = \"\";\n      if (abstractContent.Label) {\n        sectionText += `${abstractContent.Label}: `;\n      }\n      sectionText += abstractContent._;\n      abstractText = sectionText;\n    } else if (typeof abstractContent === 'string') { // 如果 AbstractText 只是純字串\n      abstractText = abstractContent;\n    }\n  }\n   if (abstractText === '') { // 確保空字串變為 null\n      abstractText = null;\n  }\n\n  results.push({\n    json: { // n8n 期望每個輸出項目都有一個 'json' 屬性\n      articleName,\n      journalName,\n      publishYear,\n      articleType,\n      fullTextUrl,\n      pmidUrl,\n      abstractText, // 已添加摘要\n      pmid // 包含原始 PMID 可能很有用\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "d894c961-ece7-40ee-b24e-e7822454a72e",
+      "name": "Parse Article Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -60,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "db",
+              "value": "pubmed"
+            },
+            {
+              "name": "id",
+              "value": "={{ $json.pmid_string }}"
+            },
+            {
+              "name": "retmode",
+              "value": "xml"
+            },
+            {
+              "name": "rettype",
+              "value": "abstract"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "033d0e41-93ea-4d38-833f-5a60eceffe70",
+      "name": "Fetch Article Details (EFetch)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract PMIDs from search results\nconst searchResult = $input.all()[0].json;\nconst pmids = searchResult.esearchresult.idlist;\n\nif (!pmids || pmids.length === 0) {\n  return [{ json: { error: 'No articles found', pmids: [] } }];\n}\n\n// Store PMIDs and other parameters for next step\nconst params = $input.all()[0].json;\nreturn [{\n  json: {\n    pmids: pmids,\n    pmid_string: pmids.join(','),\n    total_found: searchResult.esearchresult.count,\n    api_key: params.api_key,\n    email: params.email\n  }\n}];"
+      },
+      "id": "6046b11c-adba-41e0-a608-3507db41d017",
+      "name": "Process Search Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "term",
+              "value": "={{ $json.search_keywords }}"
+            },
+            {
+              "name": "retmax",
+              "value": "={{ $json.max_results }}"
+            },
+            {
+              "name": "datetype",
+              "value": "=pdat"
+            },
+            {
+              "name": "mindate",
+              "value": "={{ $json.date_from }}"
+            },
+            {
+              "name": "maxdate",
+              "value": "={{ $json.date_to }}"
+            },
+            {
+              "name": "retmode",
+              "value": "json"
+            },
+            {
+              "name": "email",
+              "value": "={{ $json.email }}"
+            },
+            {
+              "name": "api_key",
+              "value": "={{ $json.api_key }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ecb27422-c135-4bfc-b846-84156a5bd0bc",
+      "name": "PubMed Search (ESearch)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -940,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "search_keywords",
+              "value": "(\"Dementia\"[Mesh]) AND (\"Randomized Controlled Trial\"[Publication Type] OR \"Randomized Controlled Trials as Topic\"[Mesh] OR \"randomized controlled trial\"[Title/Abstract]) AND (\"Therapeutics\"[Mesh] OR \"therapy\"[Subheading] OR \"treatment\"[Title/Abstract])"
+            },
+            {
+              "name": "max_results",
+              "value": "20"
+            },
+            {
+              "name": "api_key",
+              "value": "08072bce4555af99a04f1f62e8a68c1608"
+            },
+            {
+              "name": "email",
+              "value": "your@gmail.com"
+            },
+            {
+              "name": "date_from",
+              "value": "={{ $now.minus({days: 7}).toFormat('yyyy/MM/dd') }}"
+            },
+            {
+              "name": "date_to",
+              "value": "={{ $now.toFormat('yyyy/MM/dd') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "40eabe8e-ba1b-47a8-903a-013b2895a060",
+      "name": "Set Research Parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        -1160,
+        0
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {},
+      "id": "9cbaabc1-e652-425d-ab4c-978be3a00f2f",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1380,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.xml",
+      "typeVersion": 1,
+      "position": [
+        -280,
+        0
+      ],
+      "id": "f52579e4-b1fe-4794-90ce-60a1c92e829a",
+      "name": "XML"
+    },
+    {
+      "parameters": {
+        "chunkingMode": "advanced",
+        "options": {
+          "summarizationMethodAndPrompts": {
+            "values": {
+              "combineMapPrompt": "Write a concise summary of the following in 正體中文 , including pmid URL and full text URL:\n\n\n\"{text}\"\n\n\nCONCISE SUMMARY:",
+              "prompt": "Write a concise summary of the following in 正體中文 , including pmid URL and full text URL:\n\n\n\"{text}\"\n\n\nCONCISE SUMMARY:"
+            }
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainSummarization",
+      "typeVersion": 2.1,
+      "position": [
+        160,
+        0
+      ],
+      "id": "27f249bd-f7dc-45f6-b99c-2fea1070a8ea",
+      "name": "Summarization Chain"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        180,
+        260
+      ],
+      "id": "d0e92a8b-4a03-4e0f-b3fa-6eca200b72af",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "DeKmE5JLVhlwH93R",
+          "name": "OpenAi account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Weekly Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Research Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Article Data": {
+      "main": [
+        [
+          {
+            "node": "Summarization Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Article Details (EFetch)": {
+      "main": [
+        [
+          {
+            "node": "XML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Search Results": {
+      "main": [
+        [
+          {
+            "node": "Fetch Article Details (EFetch)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PubMed Search (ESearch)": {
+      "main": [
+        [
+          {
+            "node": "Process Search Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Research Parameters": {
+      "main": [
+        [
+          {
+            "node": "PubMed Search (ESearch)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Research Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "XML": {
+      "main": [
+        [
+          {
+            "node": "Parse Article Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarization Chain": {
+      "main": [
+        [
+          {
+            "node": "Send Email Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Summarization Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "b7fdcf7e-3dbe-41f2-80ee-e39427f4eb4b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5b4eea734c9751591b2a675daadbf42a11cab65550f90c517f94d317b37d1112"
+  },
+  "id": "ZY03B1LqUG6wcuZa",
+  "tags": []
+}
